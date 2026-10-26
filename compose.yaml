@@ -1,0 +1,77 @@
+services:
+  inference:
+    image: docker_practice-inference:latest
+    build:
+      context: ./inference
+    ports:
+      - "127.0.0.1:8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - model-cache:/root/.cache/torch
+      - ./models:/models:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BUTTERFLY_CHECKPOINT=/models/butterfly_resnet18.pth
+    mem_limit: 3g
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+
+  interface:
+    build:
+      context: ./interface
+    ports:
+      - "7860:7860"
+    environment:
+      - API_URL=http://inference:8000/predict
+    depends_on:
+      inference:
+        condition: service_healthy
+    mem_limit: 512m
+    restart: unless-stopped
+
+  training:
+    build:
+      context: ./training
+    image: docker_practice-training:latest
+    profiles: ["training"]
+    command: ["python", "/app/train.py"]
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TORCH_HOME=/root/.cache/torch
+      - EPOCHS=5
+      - BATCH_SIZE=8
+      - IMAGE_SIZE=160
+      - SEED=42
+      - NUM_WORKERS=0
+    volumes:
+      - ./dataset:/data:ro
+      - ./models:/models
+      - model-cache:/root/.cache/torch
+    mem_limit: 3g
+    shm_size: 1gb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: "no"
+
+volumes:
+  model-cache:
